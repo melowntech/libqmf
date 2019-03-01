@@ -35,7 +35,11 @@
 
 #include "geo/srsdef.hpp"
 
+#include "miniball/miniball.hpp"
+
 namespace qmf {
+
+typedef miniball::MinimumBoundingSphere3_<double> MinimumBoundingSphere;
 
 /** Un-quantized mesh.
  */
@@ -51,6 +55,10 @@ struct Mesh {
     /** Center in geocentric coordinates.
      */
     math::Point3 center;
+
+    /** Minimum bounding sphere
+     */
+    MinimumBoundingSphere mbs;
 
     /** Horizon occlusion point, in geocentric coordinates.
      */

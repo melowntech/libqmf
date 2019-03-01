@@ -32,8 +32,6 @@
 #include "math/geometry.hpp"
 #include "geo/csconvertor.hpp"
 
-#include "miniball/miniball.hpp"
-
 #include "qmf.hpp"
 
 namespace qmf {
@@ -53,9 +51,9 @@ struct Header {
      */
     math::Point2f heightRange;
 
-    /** Tile minimum bounding sphere (x, y, z, r)
+    /** Tile minimum bounding sphere.
      */
-    math::Point4d mbs;
+    miniball::MinimumBoundingSphere3_<double> mbs;
 
     /** Horizon occlusion point.
      *  See http://cesiumjs.org/2013/04/25/Horizon-culling/ .
@@ -73,19 +71,43 @@ void load(std::istream &is, Header &h)
     bin::read(is, h.heightRange(0));
     bin::read(is, h.heightRange(1));
 
-    bin::read(is, h.mbs(0));
-    bin::read(is, h.mbs(1));
-    bin::read(is, h.mbs(2));
-    bin::read(is, h.mbs(3));
+    bin::read(is, h.mbs.center(0));
+    bin::read(is, h.mbs.center(1));
+    bin::read(is, h.mbs.center(2));
+    bin::read(is, h.mbs.radius);
 
     bin::read(is, h.hop(0));
     bin::read(is, h.hop(1));
     bin::read(is, h.hop(2));
 }
 
+void save(std::ostream &os, const Header &h)
+{
+    bin::write(os, h.center(0));
+    bin::write(os, h.center(1));
+    bin::write(os, h.center(2));
+
+    bin::write(os, h.heightRange(0));
+    bin::write(os, h.heightRange(1));
+
+    bin::write(os, h.mbs.center(0));
+    bin::write(os, h.mbs.center(1));
+    bin::write(os, h.mbs.center(2));
+    bin::write(os, h.mbs.radius);
+
+    bin::write(os, h.hop(0));
+    bin::write(os, h.hop(1));
+    bin::write(os, h.hop(2));
+}
+
 inline std::int16_t unzigzag(std::uint16_t value)
 {
-    return ((value >> 1) ^ (-(value & 1)));
+    return (std::int16_t(value >> 1) ^ (-std::int16_t(value & 1)));
+}
+
+inline std::uint16_t zigzag(std::int16_t value)
+{
+    return ((value >> 15) ^ (value < 1));
 }
 
 void decodeVertices(const math::Extents2 &extents
@@ -181,8 +203,8 @@ void calculateDerivedData(Mesh &mesh, const geo::SrsDefinition &srs)
     auto world(conv(mesh.mesh.vertices));
 
     mesh.center = math::center(math::computeExtents(world));
+    mesh.mbs = miniball::minimumBoundingSphere(world);
 
-    // TODO: calculate MBS
     // TODO: calculate HOP
 }
 
@@ -210,7 +232,7 @@ Mesh load(const math::Extents2 &extents, const boost::filesystem::path &path)
     LOG(info1) << "Loading quantized mesh from " << path  << ".";
     std::ifstream f;
     f.exceptions(std::ios::badbit | std::ios::failbit);
-    f.open(path.string(), std::ios_base::in);
+    f.open(path.string(), (std::ios_base::in | std::ios_base::binary));
     const auto mesh(load(extents, f, path));
     f.close();
     return mesh;
@@ -219,6 +241,24 @@ Mesh load(const math::Extents2 &extents, const boost::filesystem::path &path)
 void save(const Mesh &mesh, std::ostream &os
           , const boost::filesystem::path &path)
 {
+    const auto &m(mesh.mesh);
+
+    // serialize header
+    Header header;
+    {
+        // compute height range
+        const auto ge(math::computeExtents(m.vertices));
+        header.heightRange(0) = ge.ll(2);
+        header.heightRange(1) = ge.ur(2);
+
+        header.center = mesh.center;
+        header.mbs = mesh.mbs;
+        header.hop = mesh.hop;
+    }
+    save(os, header);
+
+    
+
     (void) mesh;
     (void) os;
     (void) path;
@@ -229,7 +269,8 @@ void save(const Mesh &mesh, const boost::filesystem::path &path)
     LOG(info1) << "Saving quantized mesh " << path  << ".";
     std::ofstream f;
     f.exceptions(std::ios::badbit | std::ios::failbit);
-    f.open(path.string(), std::ios_base::out);
+    f.open(path.string(), (std::ios_base::out | std::ios_base::trunc
+                           | std::ios_base::binary));
     save(mesh, f, path);
     f.close();
 }
