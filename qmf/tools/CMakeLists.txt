@@ -1,0 +1,1 @@
+add_subdirectory(encode EXCLUDE_FROM_ALL)
