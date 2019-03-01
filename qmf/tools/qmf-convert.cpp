@@ -29,8 +29,13 @@
 
 #include "utility/buildsys.hpp"
 #include "utility/gccversion.hpp"
+#include "utility/enum-io.hpp"
+
+#include "geometry/meshop.hpp"
 
 #include "service/cmdline.hpp"
+
+#include "geo/csconvertor.hpp"
 
 #include "qmf/qmf.hpp"
 
@@ -39,11 +44,19 @@ namespace fs = boost::filesystem;
 
 namespace {
 
-class Encode : public service::Cmdline
+UTILITY_GENERATE_ENUM(Format,
+                      ((qmf))
+                      ((obj))
+                      ((ply))
+                      )
+
+class Convert : public service::Cmdline
 {
 public:
-    Encode()
-        : service::Cmdline("qmf-encode", BUILD_TARGET_VERSION)
+    Convert()
+        : service::Cmdline("qmf-convert", BUILD_TARGET_VERSION)
+        , inputFormat_(Format::qmf)
+        , outputFormat_(Format::ply)
     {}
 
 private:
@@ -60,54 +73,100 @@ private:
 
     virtual int run() UTILITY_OVERRIDE;
 
+    void saveMesh(const qmf::Mesh &mesh);
+
     fs::path input_;
+    Format inputFormat_;
     fs::path output_;
+    Format outputFormat_;
     math::Extents2 extents_;
 };
 
-void Encode::configuration(po::options_description &cmdline
+void Convert::configuration(po::options_description &cmdline
                         , po::options_description &config
                         , po::positional_options_description &pd)
 {
     cmdline.add_options()
         ("input", po::value(&input_)->required()
-         , "Input OBJ file.")
+         , "Input file.")
         ("output", po::value(&output_)->required()
-         , "Output terrain file.")
-        ("extents", po::value(&output_)->required()
+         , "Output file.")
+        ("extents", po::value(&extents_)->required()
          , "Tile extents in geographic SRS.")
+        ("inputFormat"
+         , po::value(&inputFormat_)->default_value(inputFormat_)
+         , "Input format; qmf/ply/obj")
+        ("outputFormat"
+         , po::value(&outputFormat_)->default_value(outputFormat_)
+         , "Output format; qmf/ply/obj")
         ;
 
     pd.add("input", 1)
         .add("output", 1)
-        .add("extents", 1);
+        .add("extents", 1)
+        ;
 
     (void) config;
 }
 
-void Encode::configure(const po::variables_map &vars)
+void Convert::configure(const po::variables_map &vars)
 {
     (void) vars;
 }
 
-bool Encode::help(std::ostream &out, const std::string &what) const
+bool Convert::help(std::ostream &out, const std::string &what) const
 {
     if (what.empty()) {
-        out << R"RAW(qmf-encode
+        out << R"RAW(qmf-convert
 usage
-    qmf-encode INPUT OUTPUT [OPTIONS]
+    qmf-convert INPUT OUTPUT [OPTIONS]
 
 )RAW";
     }
     return false;
 }
 
-int Encode::run()
+geometry::Mesh inGeocent(geometry::Mesh mesh)
+{
+    auto src(geo::SrsDefinition::longlat());
+    auto dst(geo::geocentric(src));
+    mesh.vertices = geo::CsConvertor(src, dst)(mesh.vertices);
+    return mesh;
+}
+
+void Convert::saveMesh(const qmf::Mesh &mesh)
+{
+    switch (outputFormat_) {
+    case Format::qmf:
+        qmf::save(mesh, output_);
+        break;
+
+    case Format::obj:
+        geometry::saveAsObj(inGeocent(mesh.mesh), output_, "");
+        break;
+
+    case Format::ply:
+        geometry::saveAsPly(inGeocent(mesh.mesh), output_);
+        break;
+    }
+}
+
+int Convert::run()
 {
     // expecting terrain file, will detect mesh type later
-    auto mesh(qmf::load(extents_, input_));
+    switch (inputFormat_) {
+    case Format::qmf:
+        saveMesh(qmf::load(extents_, input_));
+        break;
 
-    qmf::save(mesh, output_);
+    case Format::obj:
+        abort();
+        break;
+
+    case Format::ply:
+        abort();
+        break;
+    }
 
     return EXIT_SUCCESS;
 }
@@ -116,5 +175,5 @@ int Encode::run()
 
 int main(int argc, char *argv[])
 {
-    return Encode()(argc, argv);
+    return Convert()(argc, argv);
 }

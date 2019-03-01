@@ -94,7 +94,6 @@ void decodeVertices(const math::Extents2 &extents
                     , math::Points3d &vertices)
 {
     const auto vc(bin::read<std::uint32_t>(is));
-    LOG(info4) << "vertex count: " << vc;
 
     typedef std::vector<uint16_t> VertexBuffer;
     const auto loadVcBuffer([&]() -> VertexBuffer
@@ -117,15 +116,13 @@ void decodeVertices(const math::Extents2 &extents
     const auto es(math::size(extents));
     const auto height(heightRange(1) - heightRange(0));
 
-    const double quntizedRange
-        (std::numeric_limits<std::uint16_t>::max());
     const auto remap([&](double offset, double range
                          , std::uint16_t value) -> double
     {
-        return offset + (range * value) / quntizedRange;
+        return offset + (range * value) / 32767.0;
     });
 
-    std::uint16_t u(0), v(0), h(0);
+    std::int16_t u(0), v(0), h(0);
     for (std::uint32_t i(0); i != vc; ++i) {
         u += unzigzag(uBuf[i]);
         v += unzigzag(vBuf[i]);
@@ -141,7 +138,6 @@ template <typename T>
 void decodeIndices(std::istream &is, geometry::Face::list &faces)
 {
     auto tc(bin::read<std::uint32_t>(is));
-    LOG(info4) << "triangle count: " << tc;
     faces.clear();
     faces.reserve(tc);
 
@@ -197,11 +193,6 @@ Mesh load(const math::Extents2 &extents, std::istream &is
     Header header;
     load(is, header);
 
-    LOG(info4) << std::fixed << "center: " << header.center;
-    LOG(info4) << std::fixed << "heightRange: " << header.heightRange;
-    LOG(info4) << std::fixed << "mbs: " << header.mbs;
-    LOG(info4) << std::fixed << "hop: " << header.hop;
-
     Mesh mesh;
     mesh.extents = extents;
     mesh.center = header.center;
@@ -242,6 +233,5 @@ void save(const Mesh &mesh, const boost::filesystem::path &path)
     save(mesh, f, path);
     f.close();
 }
-
 
 } // namespace qmf
