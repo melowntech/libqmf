@@ -73,7 +73,9 @@ private:
 
     virtual int run() UTILITY_OVERRIDE;
 
-    void saveMesh(const qmf::Mesh &mesh);
+    void saveMesh(const qmf::Mesh &mesh) const;
+
+    void saveMesh(const geometry::Mesh &mesh) const;
 
     fs::path input_;
     Format inputFormat_;
@@ -128,13 +130,21 @@ usage
 
 geometry::Mesh inGeocent(geometry::Mesh mesh)
 {
-    auto src(geo::SrsDefinition::longlat());
-    auto dst(geo::geocentric(src));
+    const auto src(geo::SrsDefinition::longlat());
+    const auto dst(geo::geocentric(src));
     mesh.vertices = geo::CsConvertor(src, dst)(mesh.vertices);
     return mesh;
 }
 
-void Convert::saveMesh(const qmf::Mesh &mesh)
+geometry::Mesh fromGeocent(geometry::Mesh mesh)
+{
+    const auto dst(geo::SrsDefinition::longlat());
+    const auto src(geo::geocentric(dst));
+    mesh.vertices = geo::CsConvertor(src, dst)(mesh.vertices);
+    return mesh;
+}
+
+void Convert::saveMesh(const qmf::Mesh &mesh) const
 {
     switch (outputFormat_) {
     case Format::qmf:
@@ -151,6 +161,15 @@ void Convert::saveMesh(const qmf::Mesh &mesh)
     }
 }
 
+void Convert::saveMesh(const geometry::Mesh &mesh) const
+{
+    qmf::Mesh qmesh;
+    qmesh.mesh = fromGeocent(mesh);
+    qmesh.extents = extents_;
+    qmf::calculateDerivedData(qmesh, geo::SrsDefinition::longlat());
+    saveMesh(qmesh);
+}
+
 int Convert::run()
 {
     // expecting terrain file, will detect mesh type later
@@ -164,7 +183,7 @@ int Convert::run()
         break;
 
     case Format::ply:
-        abort();
+        saveMesh(geometry::loadPly(input_));
         break;
     }
 

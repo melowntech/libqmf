@@ -100,6 +100,9 @@ void save(std::ostream &os, const Header &h)
     bin::write(os, h.hop(2));
 }
 
+const int QuantizedMax(32767);
+typedef std::vector<uint16_t> VertexBuffer;
+
 inline std::int16_t unzigzag(std::uint16_t value)
 {
     return (std::int16_t(value >> 1) ^ (-std::int16_t(value & 1)));
@@ -117,7 +120,6 @@ void decodeVertices(const math::Extents2 &extents
 {
     const auto vc(bin::read<std::uint32_t>(is));
 
-    typedef std::vector<uint16_t> VertexBuffer;
     const auto loadVcBuffer([&]() -> VertexBuffer
     {
         VertexBuffer buf;
@@ -138,10 +140,10 @@ void decodeVertices(const math::Extents2 &extents
     const auto es(math::size(extents));
     const auto height(heightRange(1) - heightRange(0));
 
-    const auto remap([&](double offset, double range
-                         , std::uint16_t value) -> double
+    const auto unquantize([&](double offset, double range
+                              , std::uint16_t value) -> double
     {
-        return offset + (range * value) / 32767.0;
+        return offset + (range * value) / double(QuantizedMax);
     });
 
     std::int16_t u(0), v(0), h(0);
@@ -150,9 +152,9 @@ void decodeVertices(const math::Extents2 &extents
         v += unzigzag(vBuf[i]);
         h += unzigzag(hBuf[i]);
 
-        vertices.emplace_back(remap(extents.ll(0), es.width, u)
-                              , remap(extents.ll(1), es.height, v)
-                              , remap(heightRange(0), height, h));
+        vertices.emplace_back(unquantize(extents.ll(0), es.width, u)
+                              , unquantize(extents.ll(1), es.height, v)
+                              , unquantize(heightRange(0), height, h));
     }
 }
 
@@ -238,6 +240,65 @@ Mesh load(const math::Extents2 &extents, const boost::filesystem::path &path)
     return mesh;
 }
 
+typedef geometry::Face::index_type Index;
+typedef std::vector<Index> IndexList;
+
+template <typename T>
+void encodeIndices(std::ostream &os, const geometry::Face::list &faces
+                   , const IndexList &vertexOrder)
+{
+    // write face count
+    bin::write(os, std::uint32_t(faces.size()));
+
+    T highest(0);
+    const auto &writeIndex([&](T index)
+    {
+        const T delta(highest - index);
+        if (!delta) { ++highest; }
+        bin::write(os, delta);
+    });
+
+    for (const auto &face : faces) {
+        writeIndex(vertexOrder[face.a]);
+        writeIndex(vertexOrder[face.b]);
+        writeIndex(vertexOrder[face.c]);
+    }
+}
+
+template<typename T>
+void writeSkirt(std::ostream &os, const IndexList &indices)
+{
+    bin::write(os, std::uint32_t(indices.size()));
+    for (const auto &index : indices) {
+        bin::write(os, T(index));
+    }
+}
+
+void encodeIndices(std::ostream &os, const geometry::Mesh &mesh
+                   , const IndexList &vertexOrder
+                   , const IndexList &west, const IndexList &south
+                   , const IndexList &east, const IndexList &north)
+{
+    if (vertexOrder.size() > std::numeric_limits<std::uint16_t>::max()) {
+        const auto offset(3 * sizeof(std::uint16_t) * vertexOrder.size());
+        if (offset % 4) {
+            // enforce 4-byte alignment
+            bin::write(os, std::uint16_t(0));
+        }
+        encodeIndices<std::uint32_t>(os, mesh.faces, vertexOrder);
+        writeSkirt<std::uint32_t>(os, west);
+        writeSkirt<std::uint32_t>(os, south);
+        writeSkirt<std::uint32_t>(os, east);
+        writeSkirt<std::uint32_t>(os, north);
+    } else {
+        encodeIndices<std::uint16_t>(os, mesh.faces, vertexOrder);
+        writeSkirt<std::uint16_t>(os, west);
+        writeSkirt<std::uint16_t>(os, south);
+        writeSkirt<std::uint16_t>(os, east);
+        writeSkirt<std::uint16_t>(os, north);
+    }
+}
+
 void save(const Mesh &mesh, std::ostream &os
           , const boost::filesystem::path &path)
 {
@@ -257,10 +318,75 @@ void save(const Mesh &mesh, std::ostream &os
     }
     save(os, header);
 
-    
+    /** Quantizes value in range [0, QuantizedMax]. Larger values are clipped.
+     */
+    const auto &quantize([&](double offset, double range
+                             , double value) -> int
+    {
+        const int res(((value - offset) * double(QuantizedMax)) / range);
+        if (res < 0) { return 0; }
+        if (res > QuantizedMax) { return QuantizedMax; }
+        return res;
+    });
 
-    (void) mesh;
-    (void) os;
+    const auto saveVcBuffer([&](const VertexBuffer buf)
+    {
+        for (const auto &value : buf) {
+            bin::write(os, value);
+        }
+    });
+
+    const auto invalid(Index(-1));
+    IndexList vertexOrder(m.vertices.size(), invalid);
+    IndexList west, south, east, north;
+
+    const auto es(math::size(mesh.extents));
+    const auto height(header.heightRange(1) - header.heightRange(0));
+
+    Index outIndex(0);
+    VertexBuffer uBuf, vBuf, hBuf;
+    int pu(0), pv(0), ph(0);
+    const auto &serializeVertex([&](Index index)
+    {
+        auto &mapped(vertexOrder[index]);
+        if (mapped != invalid) { return; }
+        mapped = outIndex++;
+
+        const auto &vertex(m.vertices[index]);
+
+        const auto u(quantize(mesh.extents.ll(0), es.width, vertex(0)));
+        const auto v(quantize(mesh.extents.ll(1), es.height, vertex(1)));
+        const auto h(quantize(header.heightRange(0), height, vertex(2)));
+
+        if (!u) { west.push_back(mapped); }
+        if (u == QuantizedMax) { east.push_back(mapped); }
+        if (!v) { south.push_back(mapped); }
+        if (v == QuantizedMax) { north.push_back(mapped); }
+
+        uBuf.push_back(zigzag(u - pu));
+        vBuf.push_back(zigzag(v - pv));
+        hBuf.push_back(zigzag(h - ph));
+        pu = u;
+        pv = v;
+        ph = h;
+    });
+
+    // encode vertices
+    for (const auto &face : m.faces) {
+        serializeVertex(face.a);
+        serializeVertex(face.b);
+        serializeVertex(face.c);
+    }
+
+    // write vertex count
+    bin::write(os, std::uint32_t(m.vertices.size()));
+    // write individual vertex components
+    saveVcBuffer(uBuf);
+    saveVcBuffer(vBuf);
+    saveVcBuffer(hBuf);
+
+    // write faces and skirt indices
+    encodeIndices(os, m, vertexOrder, west, south, east, north);
     (void) path;
 }
 
