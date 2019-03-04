@@ -29,6 +29,7 @@
 
 #include "utility/binaryio.hpp"
 
+#include "math/math.hpp"
 #include "math/geometry.hpp"
 #include "geo/csconvertor.hpp"
 
@@ -110,7 +111,7 @@ inline std::int16_t unzigzag(std::uint16_t value)
 
 inline std::uint16_t zigzag(std::int16_t value)
 {
-    return ((value >> 15) ^ (value < 1));
+    return ((value >> 15) ^ (value << 1));
 }
 
 void decodeVertices(const math::Extents2 &extents
@@ -143,7 +144,7 @@ void decodeVertices(const math::Extents2 &extents
     const auto unquantize([&](double offset, double range
                               , std::uint16_t value) -> double
     {
-        return offset + (range * value) / double(QuantizedMax);
+        return (offset + (range * value) / double(QuantizedMax));
     });
 
     std::int16_t u(0), v(0), h(0);
@@ -152,9 +153,10 @@ void decodeVertices(const math::Extents2 &extents
         v += unzigzag(vBuf[i]);
         h += unzigzag(hBuf[i]);
 
-        vertices.emplace_back(unquantize(extents.ll(0), es.width, u)
-                              , unquantize(extents.ll(1), es.height, v)
-                              , unquantize(heightRange(0), height, h));
+        const auto x(unquantize(extents.ll(0), es.width, u));
+        const auto y(unquantize(extents.ll(1), es.height, v));
+        const auto z(unquantize(heightRange(0), height, h));
+        vertices.emplace_back(x, y, z);
     }
 }
 
@@ -207,7 +209,38 @@ void calculateDerivedData(Mesh &mesh, const geo::SrsDefinition &srs)
     mesh.center = math::center(math::computeExtents(world));
     mesh.mbs = miniball::minimumBoundingSphere(world);
 
-    // TODO: calculate HOP
+    // calculate HOP
+    const auto ellipsoid(geo::ellipsoid(srs));
+
+    const auto &scale([&](const math::Point3 &v)
+    {
+        return math::Point3
+            (v(0) / ellipsoid(0), v(1) / ellipsoid(1), v(2) / ellipsoid(2));
+    });
+
+    const auto scaledCenter(scale(mesh.center));
+
+    double pScale(0);
+    for (const auto &wp : world) {
+        const auto p(scale(wp));
+        auto magnitudeSquared
+            (math::sqr(p(0)) + math::sqr(p(1)) + math::sqr(p(2)));
+        auto magnitude(std::sqrt(magnitudeSquared));
+        const math::Point3 direction(p / magnitude);
+
+        magnitudeSquared = std::max(magnitudeSquared, 1.0);
+        magnitude = std::max(magnitude, 1.0);
+
+        const auto cosAlpha(inner_prod(direction, scaledCenter));
+        const auto sinAlpha(math::length(math::crossProduct(p, scaledCenter)));
+        const auto cosBeta(1.0 / magnitude);
+        const auto sinBeta(std::sqrt(1.0 - magnitudeSquared) * cosBeta);
+
+        pScale = std::max
+            (pScale, 1.0 / (cosAlpha * cosBeta - sinAlpha * sinBeta));
+    }
+
+    mesh.hop = scaledCenter * pScale;
 }
 
 Mesh load(const math::Extents2 &extents, std::istream &is
@@ -323,7 +356,9 @@ void save(const Mesh &mesh, std::ostream &os
     const auto &quantize([&](double offset, double range
                              , double value) -> int
     {
-        const int res(((value - offset) * double(QuantizedMax)) / range);
+        // range can be zero!
+        const auto tmp((value - offset) * double(QuantizedMax));
+        const int res(range ? (tmp / range) : tmp);
         if (res < 0) { return 0; }
         if (res > QuantizedMax) { return QuantizedMax; }
         return res;

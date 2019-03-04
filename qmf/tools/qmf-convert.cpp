@@ -57,6 +57,7 @@ public:
         : service::Cmdline("qmf-convert", BUILD_TARGET_VERSION)
         , inputFormat_(Format::qmf)
         , outputFormat_(Format::ply)
+        , geocent_(true)
     {}
 
 private:
@@ -73,7 +74,7 @@ private:
 
     virtual int run() UTILITY_OVERRIDE;
 
-    void saveMesh(const qmf::Mesh &mesh) const;
+    void saveMesh(qmf::Mesh mesh) const;
 
     void saveMesh(const geometry::Mesh &mesh) const;
 
@@ -82,6 +83,7 @@ private:
     fs::path output_;
     Format outputFormat_;
     math::Extents2 extents_;
+    bool geocent_;
 };
 
 void Convert::configuration(po::options_description &cmdline
@@ -101,6 +103,9 @@ void Convert::configuration(po::options_description &cmdline
         ("outputFormat"
          , po::value(&outputFormat_)->default_value(outputFormat_)
          , "Output format; qmf/ply/obj")
+        ("geocent"
+         , po::value(&geocent_)->default_value(geocent_)
+         , "Non-qmf meshes in geocentric coordinates if true.")
         ;
 
     pd.add("input", 1)
@@ -144,19 +149,24 @@ geometry::Mesh fromGeocent(geometry::Mesh mesh)
     return mesh;
 }
 
-void Convert::saveMesh(const qmf::Mesh &mesh) const
+void Convert::saveMesh(qmf::Mesh mesh) const
 {
     switch (outputFormat_) {
-    case Format::qmf:
+    case Format::qmf: {
+        // recalculate metadata
+        qmf::calculateDerivedData(mesh, geo::SrsDefinition::longlat());
         qmf::save(mesh, output_);
         break;
+    }
 
     case Format::obj:
-        geometry::saveAsObj(inGeocent(mesh.mesh), output_, "");
+        geometry::saveAsObj(geocent_ ? inGeocent(mesh.mesh) : mesh.mesh
+                            , output_, "");
         break;
 
     case Format::ply:
-        geometry::saveAsPly(inGeocent(mesh.mesh), output_);
+        geometry::saveAsPly(geocent_ ? inGeocent(mesh.mesh) : mesh.mesh
+                            , output_);
         break;
     }
 }
@@ -164,9 +174,8 @@ void Convert::saveMesh(const qmf::Mesh &mesh) const
 void Convert::saveMesh(const geometry::Mesh &mesh) const
 {
     qmf::Mesh qmesh;
-    qmesh.mesh = fromGeocent(mesh);
+    qmesh.mesh = geocent_ ? fromGeocent(mesh) : mesh;
     qmesh.extents = extents_;
-    qmf::calculateDerivedData(qmesh, geo::SrsDefinition::longlat());
     saveMesh(qmesh);
 }
 
