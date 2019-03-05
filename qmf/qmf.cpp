@@ -218,9 +218,13 @@ void calculateDerivedData(Mesh &mesh, const geo::SrsDefinition &srs)
             (v(0) / ellipsoid(0), v(1) / ellipsoid(1), v(2) / ellipsoid(2));
     });
 
-    const auto scaledCenter(scale(mesh.center));
+    // Horizon Occlusion Point direction is unit vector from ellipsoid center to
+    // tile center (in scaled space)
+    const auto hopDirection(math::normalize(scale(mesh.center)));
 
-    double pScale(0);
+    // Find largest Horizon Occlusion Point magnitude for every point in the
+    // tile
+    double hopMagnitude(0);
     for (const auto &wp : world) {
         const auto p(scale(wp));
         auto magnitudeSquared
@@ -231,16 +235,17 @@ void calculateDerivedData(Mesh &mesh, const geo::SrsDefinition &srs)
         magnitudeSquared = std::max(magnitudeSquared, 1.0);
         magnitude = std::max(magnitude, 1.0);
 
-        const auto cosAlpha(inner_prod(direction, scaledCenter));
-        const auto sinAlpha(math::length(math::crossProduct(p, scaledCenter)));
+        const auto cosAlpha(inner_prod(direction, hopDirection));
+        const auto sinAlpha(math::length(math::crossProduct(p, hopDirection)));
         const auto cosBeta(1.0 / magnitude);
         const auto sinBeta(std::sqrt(1.0 - magnitudeSquared) * cosBeta);
 
-        pScale = std::max
-            (pScale, 1.0 / (cosAlpha * cosBeta - sinAlpha * sinBeta));
+        hopMagnitude = std::max
+            (hopMagnitude, 1.0 / (cosAlpha * cosBeta - sinAlpha * sinBeta));
     }
 
-    mesh.hop = scaledCenter * pScale;
+    // compute Horizon Occlusion Point
+    mesh.hop = hopMagnitude * hopDirection;
 }
 
 Mesh load(const math::Extents2 &extents, std::istream &is
