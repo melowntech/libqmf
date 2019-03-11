@@ -35,6 +35,7 @@
 
 #include "service/cmdline.hpp"
 
+#include "geo/po.hpp"
 #include "geo/csconvertor.hpp"
 
 #include "qmf/qmf.hpp"
@@ -96,7 +97,9 @@ void Convert::configuration(po::options_description &cmdline
         ("output", po::value(&output_)->required()
          , "Output file.")
         ("extents", po::value(&extents_)->required()
-         , "Tile extents in geographic SRS.")
+         , "Tile extents in --extentsSrs.")
+        ("extentsSrs", po::value<geo::SrsDefinition>()
+         , "SRS of tile extents (defaults to geographic SRS).")
         ("inputFormat"
          , po::value(&inputFormat_)->default_value(inputFormat_)
          , "Input format; qmf/ply/obj")
@@ -118,7 +121,11 @@ void Convert::configuration(po::options_description &cmdline
 
 void Convert::configure(const po::variables_map &vars)
 {
-    (void) vars;
+    if (vars.count("extentsSrs")) {
+        const auto src(vars["extentsSrs"].as<geo::SrsDefinition>());
+        const auto dst(geo::geographic(src));
+        extents_ = geo::CsConvertor(src, dst)(extents_);
+    }
 }
 
 bool Convert::help(std::ostream &out, const std::string &what) const
@@ -183,9 +190,19 @@ int Convert::run()
 {
     // expecting terrain file, will detect mesh type later
     switch (inputFormat_) {
-    case Format::qmf:
-        saveMesh(qmf::load(extents_, input_));
-        break;
+    case Format::qmf: {
+        auto mesh(qmf::load(extents_, input_));
+        LOG(info3)
+            << "Loaded QMF mesh:" << std::fixed
+            << "\nextents: " << mesh.extents
+            << "\ncenter: " << mesh.center
+            << "\nmbs: " << mesh.mbs.center << ", " << mesh.mbs.radius
+            << "\nhop: " << mesh.hop << "; magniture: " << norm_2(mesh.hop)
+            << "\n"
+            ;
+
+        saveMesh(mesh);
+    } break;
 
     case Format::obj:
         abort();

@@ -238,7 +238,7 @@ void calculateDerivedData(Mesh &mesh, const geo::SrsDefinition &srs)
         const auto cosAlpha(inner_prod(direction, hopDirection));
         const auto sinAlpha(math::length(math::crossProduct(p, hopDirection)));
         const auto cosBeta(1.0 / magnitude);
-        const auto sinBeta(std::sqrt(1.0 - magnitudeSquared) * cosBeta);
+        const auto sinBeta(std::sqrt(magnitudeSquared - 1.0) * cosBeta);
 
         hopMagnitude = std::max
             (hopMagnitude, 1.0 / (cosAlpha * cosBeta - sinAlpha * sinBeta));
@@ -258,6 +258,7 @@ Mesh load(const math::Extents2 &extents, std::istream &is
     Mesh mesh;
     mesh.extents = extents;
     mesh.center = header.center;
+    mesh.mbs = header.mbs;
     mesh.hop = header.hop;
 
     auto &m(mesh.mesh);
