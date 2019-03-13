@@ -362,15 +362,25 @@ void save(const Mesh &mesh, std::ostream &os
     const auto &quantize([&](double offset, double range
                              , double value) -> int
     {
-        // range can be zero!
-        const auto tmp((value - offset) * double(QuantizedMax));
-        const int res(range ? (tmp / range) : tmp);
-        if (res < 0) { return 0; }
-        if (res > QuantizedMax) { return QuantizedMax; }
+        // empty range -> use zero
+        if (!range) { return 0; }
+
+        const auto local(value - offset);
+
+        // clip to allowed range
+        if (local < 0) { return 0; }
+        if (local > range) { return QuantizedMax; }
+
+        // normalize to [0, 1] range
+        const auto normalized(local / range);
+
+        // quantize and rount to nearest integer
+        const auto res
+            (static_cast<int>(std::round(normalized * QuantizedMax)));
         return res;
     });
 
-    const auto saveVcBuffer([&](const VertexBuffer buf)
+    const auto &saveVcBuffer([&](const VertexBuffer buf)
     {
         for (const auto &value : buf) {
             bin::write(os, value);
