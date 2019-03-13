@@ -168,7 +168,7 @@ void decodeIndices(std::istream &is, geometry::Face::list &faces)
     faces.reserve(tc);
 
     T highest(0);
-    const auto decodeIndex([&]()
+    const auto decodeIndex([&]() -> geometry::Face::index_type
     {
         auto code(bin::read<T>(is));
         geometry::Face::index_type index(highest - code);
