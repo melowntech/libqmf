@@ -203,6 +203,8 @@ void decodeIndices(std::istream &is, geometry::Mesh &mesh)
 
 void calculateDerivedData(Mesh &mesh, const geo::SrsDefinition &srs)
 {
+    if (mesh.mesh.vertices.empty()) { return; }
+
     geo::CsConvertor conv(srs, geo::geocentric(srs));
     auto world(conv(mesh.mesh.vertices));
 
