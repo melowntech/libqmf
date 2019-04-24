@@ -168,7 +168,7 @@ void Convert::saveMesh(qmf::Mesh mesh) const
 
     case Format::obj:
         geometry::saveAsObj(geocent_ ? inGeocent(mesh.mesh) : mesh.mesh
-                            , output_, "");
+                            , output_, {});
         break;
 
     case Format::ply:
